@@ -164,6 +164,26 @@ def iou(box_a, box_b, metric='giou_3d'):
 	else:
 		assert False, '%s is not supported' % space
 
+def iou_points(obj_a, obj_b):
+	obj_a = np.array(obj_a.points)
+	obj_b = np.array(obj_b.points)
+	
+	total_p = obj_a.shape[0] + obj_b.shape[0]
+	common_p = 0
+
+	for i in range(obj_a.shape[0]):
+		p1 = obj_a[i]
+		for j in range(obj_b.shape[0]):
+			p2 = obj_b[j]
+			dist = np.linalg.norm(p1 - p2)
+			if dist < 0.00001:
+				common_p += 1
+				continue
+	try:
+		return common_p / (total_p - common_p)
+	except:
+		return 0
+
 def dist_ground(bbox1, bbox2):
 	# Compute distance of bottom center in 3D space, NOT considering the difference in height
 
