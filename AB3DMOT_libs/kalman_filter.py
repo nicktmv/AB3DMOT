@@ -1,10 +1,23 @@
 import numpy as np
-from filterpy.kalman import KalmanFilter, UnscentedKalmanFilter, MerweScaledSigmaPoints
+from filterpy.kalman import KalmanFilter
+
+# Constants for dimensions
+DIM_X = 10  # State vector dimension
+DIM_Z = 7  # Measurement vector dimension
+VELOCITY_INDICES = slice(7, 10)  # Indices for velocity components in state vector
+
+# Constants for initial uncertainties
+INITIAL_POSITION_UNCERTAINTY = 10.0
+INITIAL_VELOCITY_UNCERTAINTY = 1000.0
+
+# Constants for process noise
+VELOCITY_PROCESS_NOISE = 0.01
 
 
 class Filter(object):
-    def __init__(self, bbox3D, info, ID):
+    """Base class for Kalman filter-based trackers."""
 
+    def __init__(self, bbox3D, info, ID):
         self.initial_pos = bbox3D
         self.time_since_update = 0
         self.id = ID
@@ -16,70 +29,33 @@ class KF(Filter):
     def __init__(self, bbox3D, info, ID):
         super().__init__(bbox3D, info, ID)
 
-        self.kf = KalmanFilter(dim_x=10, dim_z=7)
-        # There is no need to use EKF here as the measurement and state are in the same space with linear relationship
+        self.kf = KalmanFilter(dim_x=DIM_X, dim_z=DIM_Z)
 
-        # state x dimension 10: x, y, z, theta, l, w, h, dx, dy, dz
-        # constant velocity model: x' = x + dx, y' = y + dy, z' = z + dz
-        # while all others (theta, l, w, h, dx, dy, dz) remain the same
-        self.kf.F = np.array(
-            [
-                [
-                    1,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    1,
-                    0,
-                    0,
-                ],  # state transition matrix, dim_x * dim_x
-                [0, 1, 0, 0, 0, 0, 0, 0, 1, 0],
-                [0, 0, 1, 0, 0, 0, 0, 0, 0, 1],
-                [0, 0, 0, 1, 0, 0, 0, 0, 0, 0],
-                [0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
-                [0, 0, 0, 0, 0, 1, 0, 0, 0, 0],
-                [0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
-                [0, 0, 0, 0, 0, 0, 0, 1, 0, 0],
-                [0, 0, 0, 0, 0, 0, 0, 0, 1, 0],
-                [0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-            ]
-        )
+        # State transition matrix for constant velocity model
+        self.kf.F = np.eye(DIM_X)
+        self.kf.F[0, 7] = self.kf.F[1, 8] = self.kf.F[2, 9] = 1
 
-        # measurement function, dim_z * dim_x, the first 7 dimensions of the measurement correspond to the state
-        self.kf.H = np.array(
-            [
-                [1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                [0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
-                [0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
-                [0, 0, 0, 1, 0, 0, 0, 0, 0, 0],
-                [0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
-                [0, 0, 0, 0, 0, 1, 0, 0, 0, 0],
-                [0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
-            ]
-        )
+        # Measurement function, assuming direct observation of the first 7 state variables
+        self.kf.H = np.zeros((DIM_Z, DIM_X))
+        np.fill_diagonal(self.kf.H[:DIM_Z, :DIM_Z], 1)
 
-        # measurement uncertainty, uncomment if not super trust the measurement data due to detection noise
-        # self.kf.R[0:,0:] *= 10.
+        # Uncomment and adjust if measurement data is noisy
+        # self.kf.R[0:, 0:] *= 10
 
-        # initial state uncertainty at time 0
-        # Given a single data, the initial velocity is very uncertain, so giv a high uncertainty to start
-        self.kf.P[7:, 7:] *= 1000.0
-        self.kf.P *= 10.0
+        # Initial state uncertainty
+        self.kf.P *= INITIAL_POSITION_UNCERTAINTY
+        self.kf.P[VELOCITY_INDICES, VELOCITY_INDICES] *= INITIAL_VELOCITY_UNCERTAINTY
 
-        # process uncertainty, make the constant velocity part more certain
-        self.kf.Q[7:, 7:] *= 0.01
+        # Process uncertainty, particularly for the velocity components
+        self.kf.Q[VELOCITY_INDICES, VELOCITY_INDICES] *= VELOCITY_PROCESS_NOISE
 
-        # initialize data
+        # Initialize state vector with initial position
         self.kf.x[:7] = self.initial_pos.reshape((7, 1))
 
     def compute_innovation_matrix(self):
-        """compute the innovation matrix for association with mahalanobis distance"""
+        """Compute the innovation matrix for association with Mahalanobis distance."""
         return np.matmul(np.matmul(self.kf.H, self.kf.P), self.kf.H.T) + self.kf.R
 
     def get_velocity(self):
-        # return the object velocity in the state
-
-        return self.kf.x[7:]
+        """Return the object's velocity from the state vector."""
+        return self.kf.x[VELOCITY_INDICES]
